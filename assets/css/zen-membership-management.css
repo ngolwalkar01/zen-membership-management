@@ -37,6 +37,11 @@
 	width: 100%;
 }
 
+.zmm-panel h3 {
+	font-size: 1.15rem;
+	margin: 0 0 10px;
+}
+
 .zmm-details th,
 .zmm-details td {
 	text-align: left;
