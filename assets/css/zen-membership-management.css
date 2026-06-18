@@ -1,0 +1,85 @@
+.zmm-membership {
+	display: grid;
+	gap: 24px;
+}
+
+.zmm-membership__header {
+	align-items: center;
+	display: flex;
+	gap: 16px;
+	justify-content: space-between;
+}
+
+.zmm-membership__header h2 {
+	margin: 0;
+}
+
+.zmm-membership__eyebrow {
+	font-size: 0.82rem;
+	font-weight: 700;
+	letter-spacing: 0;
+	margin: 0 0 4px;
+	text-transform: uppercase;
+}
+
+.zmm-status {
+	border: 1px solid currentColor;
+	border-radius: 999px;
+	display: inline-flex;
+	font-size: 0.85rem;
+	font-weight: 700;
+	line-height: 1;
+	padding: 8px 12px;
+	white-space: nowrap;
+}
+
+.zmm-panel {
+	width: 100%;
+}
+
+.zmm-details th,
+.zmm-details td {
+	text-align: left;
+	vertical-align: middle;
+}
+
+.zmm-details th {
+	width: 34%;
+}
+
+.zmm-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.zmm-action {
+	margin: 0;
+}
+
+.zmm-empty {
+	display: grid;
+	gap: 8px;
+}
+
+.zmm-empty h2,
+.zmm-empty p {
+	margin: 0;
+}
+
+@media (max-width: 640px) {
+	.zmm-membership__header {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.zmm-details th,
+	.zmm-details td {
+		display: block;
+		width: 100%;
+	}
+
+	.zmm-details th {
+		padding-bottom: 4px;
+	}
+}
