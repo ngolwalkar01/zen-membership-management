@@ -18,6 +18,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		const ENDPOINT = 'my-membership';
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;
+		const META_CANCEL_AFTER_NEXT_PAYMENT = '_zmm_cancel_after_next_payment';
+		const META_CANCEL_REQUESTED_AT = '_zmm_cancel_requested_at';
+		const META_CANCEL_REQUESTED_BY = '_zmm_cancel_requested_by';
+		const META_CANCEL_TARGET_END = '_zmm_cancel_target_end';
 
 		/**
 		 * Boot plugin hooks.
@@ -53,6 +57,9 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_filter( 'woocommerce_account_menu_items', array( __CLASS__, 'filter_account_menu_items' ), 1001 );
 			add_action( 'woocommerce_account_' . self::ENDPOINT . '_endpoint', array( __CLASS__, 'render_account_endpoint' ) );
 			add_filter( 'woocommerce_get_query_vars', array( __CLASS__, 'filter_woocommerce_query_vars' ) );
+
+			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
+			add_action( 'woocommerce_subscription_renewal_payment_complete', array( __CLASS__, 'complete_scheduled_late_cancellation' ), 30, 2 );
 
 			add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'validate_single_membership_add_to_cart' ), 20, 3 );
 			add_action( 'woocommerce_check_cart_items', array( __CLASS__, 'validate_single_membership_cart' ) );
@@ -373,6 +380,8 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 */
 		private static function get_subscription_detail_rows( $subscription ) {
 			$next_payment = $subscription->get_time( 'next_payment' );
+			$deadline     = self::get_cancellation_deadline_time( $subscription );
+			$end_time     = self::get_cancellation_end_time( $subscription );
 			$rows = array(
 				array(
 					'label' => __( 'Status', 'zen-membership-management' ),
@@ -388,9 +397,16 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				),
 				array(
 					'label' => __( 'Cancellation deadline', 'zen-membership-management' ),
-					'value' => $next_payment ? esc_html( self::format_timestamp( strtotime( '-' . self::CANCELLATION_DEADLINE_DAYS . ' days', $next_payment ) ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
+					'value' => $deadline ? esc_html( self::format_timestamp( $deadline ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
 				),
 			);
+
+			if ( $end_time ) {
+				$rows[] = array(
+					'label' => __( 'Membership end date', 'zen-membership-management' ),
+					'value' => esc_html( self::format_timestamp( $end_time ) ),
+				);
+			}
 
 			if ( $subscription->get_time( 'next_payment' ) > 0 ) {
 				$rows[] = array(
@@ -443,7 +459,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 * @return string
 		 */
 		private static function get_subscription_status_label( $subscription ) {
-			if ( $subscription->has_status( 'pending-cancel' ) ) {
+			if ( $subscription->has_status( 'pending-cancel' ) || self::is_late_cancellation_scheduled( $subscription ) ) {
 				return __( 'Pending Cancellation', 'zen-membership-management' );
 			}
 
@@ -505,7 +521,238 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			unset( $actions['renew_now'], $actions['renew'] );
 
+			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
+				unset( $actions['cancel'] );
+			}
+
 			return apply_filters( 'zmm_membership_subscription_actions', $actions, $subscription );
+		}
+
+		/**
+		 * Intercept monthly cancellation requests after the 7-day deadline.
+		 */
+		public static function maybe_intercept_late_subscription_cancellation() {
+			if ( is_admin() || ( function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() ) || ! self::dependencies_loaded() || ! function_exists( 'wcs_get_subscription' ) ) {
+				return;
+			}
+
+			$requested_status = isset( $_GET['change_subscription_to'] ) ? wc_clean( wp_unslash( $_GET['change_subscription_to'] ) ) : '';
+
+			if ( 'cancelled' !== $requested_status ) {
+				return;
+			}
+
+			$subscription_id = isset( $_GET['subscription_id'] ) ? absint( wp_unslash( $_GET['subscription_id'] ) ) : 0;
+			$nonce           = isset( $_GET['_wpnonce'] ) ? wc_clean( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+			$subscription    = $subscription_id ? wcs_get_subscription( $subscription_id ) : null;
+
+			if ( ! $subscription instanceof WC_Subscription || ! self::is_membership_subscription_for_current_user( $subscription ) || ! self::is_monthly_subscription( $subscription ) ) {
+				return;
+			}
+
+			if ( ! self::is_after_cancellation_deadline( $subscription ) ) {
+				return;
+			}
+
+			if ( ! self::customer_can_cancel_subscription( $subscription, $nonce ) ) {
+				wc_add_notice( __( 'We could not verify this cancellation request. Please try again.', 'zen-membership-management' ), 'error' );
+				wp_safe_redirect( $subscription->get_view_order_url() );
+				exit;
+			}
+
+			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
+				wc_add_notice( __( 'Your membership cancellation is already scheduled after the next paid month.', 'zen-membership-management' ), 'notice' );
+				wp_safe_redirect( $subscription->get_view_order_url() );
+				exit;
+			}
+
+			self::schedule_late_cancellation( $subscription );
+
+			wc_add_notice( __( 'Your cancellation has been accepted. The upcoming payment will still be charged, and your membership will end after that paid month.', 'zen-membership-management' ), 'success' );
+			wp_safe_redirect( $subscription->get_view_order_url() );
+			exit;
+		}
+
+		/**
+		 * Move a late-cancelled subscription to pending cancellation after the charged renewal.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @param WC_Order|null   $last_order   Renewal order.
+		 */
+		public static function complete_scheduled_late_cancellation( $subscription, $last_order = null ) {
+			if ( ! $subscription instanceof WC_Subscription || ! self::is_late_cancellation_scheduled( $subscription ) ) {
+				return;
+			}
+
+			if ( $subscription->has_status( 'pending-cancel' ) ) {
+				$subscription->delete_meta_data( self::META_CANCEL_AFTER_NEXT_PAYMENT );
+				$subscription->save();
+				return;
+			}
+
+			if ( ! $subscription->can_be_updated_to( 'cancelled' ) ) {
+				return;
+			}
+
+			$subscription->cancel_order( __( 'Subscription moved to pending cancellation after the final charged renewal.', 'zen-membership-management' ) );
+			$subscription->delete_meta_data( self::META_CANCEL_AFTER_NEXT_PAYMENT );
+			$subscription->save();
+
+			if ( $last_order instanceof WC_Order ) {
+				$last_order->add_order_note( __( 'Membership cancellation request completed after this renewal payment.', 'zen-membership-management' ) );
+			}
+		}
+
+		/**
+		 * Schedule cancellation after the next successful renewal payment.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function schedule_late_cancellation( $subscription ) {
+			$subscription->update_meta_data( self::META_CANCEL_AFTER_NEXT_PAYMENT, 'yes' );
+			$subscription->update_meta_data( self::META_CANCEL_REQUESTED_AT, current_time( 'mysql', true ) );
+			$subscription->update_meta_data( self::META_CANCEL_REQUESTED_BY, get_current_user_id() );
+
+			$target_end_time = self::get_late_cancellation_target_end_time( $subscription );
+
+			if ( $target_end_time ) {
+				$subscription->update_meta_data( self::META_CANCEL_TARGET_END, gmdate( 'Y-m-d H:i:s', $target_end_time ) );
+			}
+
+			$subscription->add_order_note( __( 'Customer requested cancellation after the deadline. Subscription will be set to pending cancellation after the next successful renewal payment.', 'zen-membership-management' ) );
+			$subscription->save();
+		}
+
+		/**
+		 * Validate the cancel link for the current customer.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @param string          $nonce        Request nonce.
+		 * @return bool
+		 */
+		private static function customer_can_cancel_subscription( $subscription, $nonce ) {
+			return get_current_user_id()
+				&& wp_verify_nonce( $nonce, $subscription->get_id() . $subscription->get_status() )
+				&& current_user_can( 'edit_shop_subscription_status', $subscription->get_id() )
+				&& $subscription->can_be_updated_to( 'cancelled' );
+		}
+
+		/**
+		 * Check whether this is the account user's linked membership subscription.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function is_membership_subscription_for_current_user( $subscription ) {
+			$membership          = self::get_current_user_membership();
+			$linked_subscription = $membership ? self::get_membership_subscription( $membership ) : null;
+
+			return $linked_subscription instanceof WC_Subscription && (int) $linked_subscription->get_id() === (int) $subscription->get_id();
+		}
+
+		/**
+		 * Check whether the subscription uses the monthly rule set.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function is_monthly_subscription( $subscription ) {
+			return 1 === (int) $subscription->get_billing_interval() && 'month' === $subscription->get_billing_period();
+		}
+
+		/**
+		 * Check whether cancellation was requested after the monthly deadline.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function is_after_cancellation_deadline( $subscription ) {
+			$deadline = self::get_cancellation_deadline_time( $subscription );
+
+			return $deadline && current_time( 'timestamp', true ) > $deadline;
+		}
+
+		/**
+		 * Get cancellation deadline timestamp.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return int
+		 */
+		private static function get_cancellation_deadline_time( $subscription ) {
+			$next_payment = $subscription->get_time( 'next_payment' );
+
+			return $next_payment ? max( 0, (int) $next_payment - ( self::get_cancellation_deadline_days() * DAY_IN_SECONDS ) ) : 0;
+		}
+
+		/**
+		 * Get configured cancellation deadline in days.
+		 *
+		 * @return int
+		 */
+		private static function get_cancellation_deadline_days() {
+			return max(
+				0,
+				absint(
+					apply_filters(
+						'zmm_monthly_cancellation_deadline_days',
+						self::CANCELLATION_DEADLINE_DAYS
+					)
+				)
+			);
+		}
+
+		/**
+		 * Get the customer-facing cancellation end timestamp.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return int
+		 */
+		private static function get_cancellation_end_time( $subscription ) {
+			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
+				return self::get_late_cancellation_target_end_time( $subscription );
+			}
+
+			if ( $subscription->has_status( 'pending-cancel' ) ) {
+				return (int) $subscription->get_time( 'end' );
+			}
+
+			return 0;
+		}
+
+		/**
+		 * Check scheduled late cancellation flag.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function is_late_cancellation_scheduled( $subscription ) {
+			return 'yes' === $subscription->get_meta( self::META_CANCEL_AFTER_NEXT_PAYMENT, true );
+		}
+
+		/**
+		 * Calculate the date when a late-cancelled membership should end.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return int
+		 */
+		private static function get_late_cancellation_target_end_time( $subscription ) {
+			$stored_target = $subscription->get_meta( self::META_CANCEL_TARGET_END, true );
+
+			if ( $stored_target ) {
+				return (int) strtotime( $stored_target . ' UTC' );
+			}
+
+			$next_payment = $subscription->get_time( 'next_payment' );
+
+			if ( ! $next_payment ) {
+				return 0;
+			}
+
+			if ( function_exists( 'wcs_add_time' ) ) {
+				return (int) wcs_add_time( $subscription->get_billing_interval(), $subscription->get_billing_period(), $next_payment );
+			}
+
+			return (int) strtotime( '+' . (int) $subscription->get_billing_interval() . ' ' . $subscription->get_billing_period(), $next_payment );
 		}
 
 		/**
