@@ -62,6 +62,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_late_cancellation' ), 80 );
 			add_action( 'woocommerce_subscription_renewal_payment_complete', array( __CLASS__, 'complete_scheduled_late_cancellation' ), 30, 2 );
+			add_action( 'woocommerce_subscription_renewal_payment_failed', array( __CLASS__, 'cancel_scheduled_late_cancellation_after_failed_renewal' ), 30, 2 );
 
 			add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'validate_single_membership_add_to_cart' ), 20, 3 );
 			add_action( 'woocommerce_check_cart_items', array( __CLASS__, 'validate_single_membership_cart' ) );
@@ -774,6 +775,34 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			if ( $last_order instanceof WC_Order ) {
 				$last_order->add_order_note( __( 'Membership cancellation request completed after this renewal payment.', 'zen-membership-management' ) );
+			}
+		}
+
+		/**
+		 * Cancel immediately if the required final renewal payment fails.
+		 *
+		 * @param WC_Subscription $subscription  Subscription.
+		 * @param WC_Order|null   $renewal_order Failed renewal order.
+		 */
+		public static function cancel_scheduled_late_cancellation_after_failed_renewal( $subscription, $renewal_order = null ) {
+			if ( ! $subscription instanceof WC_Subscription || ! self::is_late_cancellation_scheduled( $subscription ) ) {
+				return;
+			}
+
+			self::clear_late_cancellation_schedule( $subscription );
+
+			$note = __( 'Membership cancellation request completed immediately because the required final renewal payment failed.', 'zen-membership-management' );
+
+			if ( $subscription->can_be_updated_to( 'cancelled' ) ) {
+				$subscription->update_status( 'cancelled', $note );
+			} else {
+				$subscription->add_order_note( $note );
+			}
+
+			$subscription->save();
+
+			if ( $renewal_order instanceof WC_Order ) {
+				$renewal_order->add_order_note( __( 'Membership was cancelled because this required final renewal payment failed.', 'zen-membership-management' ) );
 			}
 		}
 
