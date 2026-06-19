@@ -60,6 +60,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_filter( 'woocommerce_get_query_vars', array( __CLASS__, 'filter_woocommerce_query_vars' ) );
 
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
+			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_late_cancellation' ), 80 );
 			add_action( 'woocommerce_subscription_renewal_payment_complete', array( __CLASS__, 'complete_scheduled_late_cancellation' ), 30, 2 );
 
 			add_filter( 'woocommerce_add_to_cart_validation', array( __CLASS__, 'validate_single_membership_add_to_cart' ), 20, 3 );
@@ -433,7 +434,9 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 							<?php $actions = self::get_subscription_actions( $subscription ); ?>
 							<?php if ( ! empty( $actions ) ) : ?>
 								<tr>
-									<th scope="row"><?php esc_html_e( 'Actions', 'zen-membership-management' ); ?></th>
+									<th scope="row">
+										<?php echo esc_html( 1 === count( $actions ) ? __( 'Action', 'zen-membership-management' ) : __( 'Actions', 'zen-membership-management' ) ); ?>
+									</th>
 									<td class="zmm-actions">
 										<?php foreach ( $actions as $key => $action ) : ?>
 											<a class="button zmm-action zmm-action--<?php echo esc_attr( sanitize_html_class( $key ) ); ?>" href="<?php echo esc_url( $action['url'] ); ?>">
@@ -473,10 +476,11 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				$next_payment = $subscription->get_time( 'next_payment' );
 				$deadline     = self::get_cancellation_deadline_time( $subscription );
 				$end_time     = self::get_cancellation_end_time( $subscription );
+				$payment      = $subscription->get_payment_method_to_display( 'customer' );
 
 				$rows[] = array(
 					'label' => __( 'Next payment date', 'zen-membership-management' ),
-					'value' => $next_payment ? esc_html( self::format_timestamp( $next_payment ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
+					'value' => esc_html( self::get_next_payment_display( $subscription, $next_payment ) ),
 				);
 
 				$rows[] = array(
@@ -486,7 +490,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 				if ( $end_time ) {
 					$rows[] = array(
-						'label' => __( 'Membership end date', 'zen-membership-management' ),
+						'label' => __( 'End date', 'zen-membership-management' ),
 						'value' => esc_html( self::format_timestamp( $end_time ) ),
 					);
 				}
@@ -505,10 +509,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				);
 			}
 
-			if ( $subscription && $subscription->get_time( 'next_payment' ) > 0 ) {
+			if ( $subscription && ! empty( $payment ) ) {
 				$rows[] = array(
 					'label' => __( 'Payment method', 'zen-membership-management' ),
-					'value' => esc_html( $subscription->get_payment_method_to_display( 'customer' ) ),
+					'value' => esc_html( $payment ),
 				);
 			}
 
@@ -555,6 +559,21 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
+		 * Format the next payment display value.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @param int             $next_payment Next payment timestamp.
+		 * @return string
+		 */
+		private static function get_next_payment_display( $subscription, $next_payment ) {
+			if ( self::should_show_no_upcoming_payment( $subscription ) ) {
+				return __( 'No upcoming payment', 'zen-membership-management' );
+			}
+
+			return $next_payment ? self::format_timestamp( $next_payment ) : __( 'N/A', 'zen-membership-management' );
+		}
+
+		/**
 		 * Get the Zencoin amount granted by the membership product.
 		 *
 		 * @param object $membership User membership.
@@ -585,9 +604,102 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
 				unset( $actions['cancel'] );
+
+				$actions['zmm_reactivate_late_cancellation'] = array(
+					'url'  => self::get_late_cancellation_reactivation_url( $subscription ),
+					'name' => __( 'Reactivate Membership', 'zen-membership-management' ),
+					'role' => 'button',
+				);
+			} elseif ( isset( $actions['reactivate'] ) ) {
+				$actions['reactivate']['name'] = __( 'Reactivate Membership', 'zen-membership-management' );
 			}
 
 			return apply_filters( 'zmm_membership_subscription_actions', $actions, $subscription );
+		}
+
+		/**
+		 * Get custom reactivation URL for a late-cancellation scheduled subscription.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return string
+		 */
+		private static function get_late_cancellation_reactivation_url( $subscription ) {
+			return wp_nonce_url(
+				add_query_arg(
+					array(
+						'zmm_membership_action' => 'reactivate_late_cancellation',
+						'subscription_id'       => $subscription->get_id(),
+					),
+					wc_get_account_endpoint_url( self::ENDPOINT )
+				),
+				self::get_late_cancellation_reactivation_nonce_action( $subscription )
+			);
+		}
+
+		/**
+		 * Get custom reactivation nonce action.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return string
+		 */
+		private static function get_late_cancellation_reactivation_nonce_action( $subscription ) {
+			return 'zmm_reactivate_late_cancellation_' . $subscription->get_id();
+		}
+
+		/**
+		 * Handle reactivation for our custom late-cancellation scheduled state.
+		 */
+		public static function maybe_reactivate_late_cancellation() {
+			if ( is_admin() || ( function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() ) || ! self::dependencies_loaded() || ! function_exists( 'wcs_get_subscription' ) ) {
+				return;
+			}
+
+			$requested_action = isset( $_GET['zmm_membership_action'] ) ? wc_clean( wp_unslash( $_GET['zmm_membership_action'] ) ) : '';
+
+			if ( 'reactivate_late_cancellation' !== $requested_action ) {
+				return;
+			}
+
+			$subscription_id = isset( $_GET['subscription_id'] ) ? absint( wp_unslash( $_GET['subscription_id'] ) ) : 0;
+			$nonce           = isset( $_GET['_wpnonce'] ) ? wc_clean( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+			$subscription    = $subscription_id ? wcs_get_subscription( $subscription_id ) : null;
+
+			if ( ! $subscription instanceof WC_Subscription || ! self::is_membership_subscription_for_current_user( $subscription ) || ! self::is_monthly_subscription( $subscription ) ) {
+				return;
+			}
+
+			if ( ! wp_verify_nonce( $nonce, self::get_late_cancellation_reactivation_nonce_action( $subscription ) ) || ! current_user_can( 'edit_shop_subscription_status', $subscription->get_id() ) ) {
+				wc_add_notice( __( 'We could not verify this reactivation request. Please try again.', 'zen-membership-management' ), 'error' );
+				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
+				exit;
+			}
+
+			if ( ! self::is_late_cancellation_scheduled( $subscription ) ) {
+				wc_add_notice( __( 'This membership is not scheduled for cancellation.', 'zen-membership-management' ), 'notice' );
+				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
+				exit;
+			}
+
+			self::clear_late_cancellation_schedule( $subscription );
+
+			$subscription->add_order_note( __( 'Customer reactivated membership after a late cancellation request. Scheduled cancellation was removed.', 'zen-membership-management' ) );
+			$subscription->save();
+
+			wc_add_notice( __( 'Your membership has been reactivated.', 'zen-membership-management' ), 'success' );
+			wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
+			exit;
+		}
+
+		/**
+		 * Remove the custom late-cancellation schedule from a subscription.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function clear_late_cancellation_schedule( $subscription ) {
+			$subscription->delete_meta_data( self::META_CANCEL_AFTER_NEXT_PAYMENT );
+			$subscription->delete_meta_data( self::META_CANCEL_REQUESTED_AT );
+			$subscription->delete_meta_data( self::META_CANCEL_REQUESTED_BY );
+			$subscription->delete_meta_data( self::META_CANCEL_TARGET_END );
 		}
 
 		/**
@@ -781,6 +893,16 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			return 0;
+		}
+
+		/**
+		 * Check whether the table should show no upcoming payment.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function should_show_no_upcoming_payment( $subscription ) {
+			return $subscription->has_status( 'pending-cancel' ) && ! self::is_late_cancellation_scheduled( $subscription );
 		}
 
 		/**
