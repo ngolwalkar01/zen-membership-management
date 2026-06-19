@@ -194,12 +194,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			echo '<div class="zmm-membership">';
 			self::render_membership_header( $membership );
-
-			if ( $subscription ) {
-				self::render_subscription_details( $subscription );
-			}
-
-			self::render_membership_details( $membership );
+			self::render_membership_details( $membership, $subscription );
 
 			if ( $subscription ) {
 				self::render_subscription_totals( $subscription );
@@ -312,15 +307,15 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Render subscription details.
+		 * Render membership details.
 		 *
-		 * @param WC_Subscription $subscription Linked subscription.
+		 * @param object               $membership   User membership.
+		 * @param WC_Subscription|null $subscription Linked subscription.
 		 */
-		private static function render_subscription_details( $subscription ) {
-			$rows = self::get_subscription_detail_rows( $subscription );
+		private static function render_membership_details( $membership, $subscription = null ) {
+			$rows = self::get_membership_detail_rows( $membership, $subscription );
 			?>
 			<section class="zmm-panel">
-				<h3><?php esc_html_e( 'Subscription', 'zen-membership-management' ); ?></h3>
 				<table class="shop_table shop_table_responsive zmm-details">
 					<tbody>
 						<?php foreach ( $rows as $row ) : ?>
@@ -329,18 +324,20 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 								<td><?php echo wp_kses_post( $row['value'] ); ?></td>
 							</tr>
 						<?php endforeach; ?>
-						<?php $actions = self::get_subscription_actions( $subscription ); ?>
-						<?php if ( ! empty( $actions ) ) : ?>
-							<tr>
-								<th scope="row"><?php esc_html_e( 'Actions', 'zen-membership-management' ); ?></th>
-								<td class="zmm-actions">
-									<?php foreach ( $actions as $key => $action ) : ?>
-										<a class="button zmm-action zmm-action--<?php echo esc_attr( sanitize_html_class( $key ) ); ?>" href="<?php echo esc_url( $action['url'] ); ?>">
-											<?php echo esc_html( $action['name'] ); ?>
-										</a>
-									<?php endforeach; ?>
-								</td>
-							</tr>
+						<?php if ( $subscription ) : ?>
+							<?php $actions = self::get_subscription_actions( $subscription ); ?>
+							<?php if ( ! empty( $actions ) ) : ?>
+								<tr>
+									<th scope="row"><?php esc_html_e( 'Actions', 'zen-membership-management' ); ?></th>
+									<td class="zmm-actions">
+										<?php foreach ( $actions as $key => $action ) : ?>
+											<a class="button zmm-action zmm-action--<?php echo esc_attr( sanitize_html_class( $key ) ); ?>" href="<?php echo esc_url( $action['url'] ); ?>">
+												<?php echo esc_html( $action['name'] ); ?>
+											</a>
+										<?php endforeach; ?>
+									</td>
+								</tr>
+							<?php endif; ?>
 						<?php endif; ?>
 					</tbody>
 				</table>
@@ -349,92 +346,46 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Render membership details.
-		 *
-		 * @param object $membership User membership.
-		 */
-		private static function render_membership_details( $membership ) {
-			$rows = self::get_membership_detail_rows( $membership );
-			?>
-			<section class="zmm-panel">
-				<h3><?php esc_html_e( 'Membership', 'zen-membership-management' ); ?></h3>
-				<table class="shop_table shop_table_responsive zmm-details">
-					<tbody>
-						<?php foreach ( $rows as $row ) : ?>
-							<tr>
-								<th scope="row"><?php echo esc_html( $row['label'] ); ?></th>
-								<td><?php echo wp_kses_post( $row['value'] ); ?></td>
-							</tr>
-						<?php endforeach; ?>
-					</tbody>
-				</table>
-			</section>
-			<?php
-		}
-
-		/**
-		 * Build subscription detail rows.
-		 *
-		 * @param WC_Subscription $subscription Linked subscription.
-		 * @return array
-		 */
-		private static function get_subscription_detail_rows( $subscription ) {
-			$next_payment = $subscription->get_time( 'next_payment' );
-			$deadline     = self::get_cancellation_deadline_time( $subscription );
-			$end_time     = self::get_cancellation_end_time( $subscription );
-			$rows = array(
-				array(
-					'label' => __( 'Status', 'zen-membership-management' ),
-					'value' => esc_html( self::get_subscription_status_label( $subscription ) ),
-				),
-				array(
-					'label' => __( 'Start date', 'zen-membership-management' ),
-					'value' => $subscription->get_time( 'start' ) ? esc_html( self::format_timestamp( $subscription->get_time( 'start' ) ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
-				),
-				array(
-					'label' => __( 'Next payment date', 'zen-membership-management' ),
-					'value' => $next_payment ? esc_html( self::format_timestamp( $next_payment ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
-				),
-				array(
-					'label' => __( 'Cancellation deadline', 'zen-membership-management' ),
-					'value' => $deadline ? esc_html( self::format_timestamp( $deadline ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
-				),
-			);
-
-			if ( $end_time ) {
-				$rows[] = array(
-					'label' => __( 'Membership end date', 'zen-membership-management' ),
-					'value' => esc_html( self::format_timestamp( $end_time ) ),
-				);
-			}
-
-			if ( $subscription->get_time( 'next_payment' ) > 0 ) {
-				$rows[] = array(
-					'label' => __( 'Payment method', 'zen-membership-management' ),
-					'value' => esc_html( $subscription->get_payment_method_to_display( 'customer' ) ),
-				);
-			}
-
-			return apply_filters( 'zmm_subscription_detail_rows', $rows, $subscription );
-		}
-
-		/**
 		 * Build membership detail rows.
 		 *
-		 * @param object $membership User membership.
+		 * @param object               $membership   User membership.
+		 * @param WC_Subscription|null $subscription Linked subscription.
 		 * @return array
 		 */
-		private static function get_membership_detail_rows( $membership ) {
+		private static function get_membership_detail_rows( $membership, $subscription = null ) {
 			$rows = array(
 				array(
 					'label' => __( 'Status', 'zen-membership-management' ),
-					'value' => esc_html( wc_memberships_get_user_membership_status_name( $membership->get_status() ) ),
+					'value' => esc_html( self::get_customer_status_label( $membership, $subscription ) ),
 				),
 				array(
 					'label' => __( 'Start date', 'zen-membership-management' ),
 					'value' => esc_html( self::format_membership_date( $membership, 'start' ) ),
 				),
 			);
+
+			if ( $subscription ) {
+				$next_payment = $subscription->get_time( 'next_payment' );
+				$deadline     = self::get_cancellation_deadline_time( $subscription );
+				$end_time     = self::get_cancellation_end_time( $subscription );
+
+				$rows[] = array(
+					'label' => __( 'Next payment date', 'zen-membership-management' ),
+					'value' => $next_payment ? esc_html( self::format_timestamp( $next_payment ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
+				);
+
+				$rows[] = array(
+					'label' => __( 'Cancellation deadline', 'zen-membership-management' ),
+					'value' => $deadline ? esc_html( self::format_timestamp( $deadline ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
+				);
+
+				if ( $end_time ) {
+					$rows[] = array(
+						'label' => __( 'Membership end date', 'zen-membership-management' ),
+						'value' => esc_html( self::format_timestamp( $end_time ) ),
+					);
+				}
+			}
 
 			$coin_grant = self::get_membership_coin_grant( $membership );
 
@@ -449,23 +400,29 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				);
 			}
 
-			return apply_filters( 'zmm_membership_detail_rows', $rows, $membership );
+			if ( $subscription && $subscription->get_time( 'next_payment' ) > 0 ) {
+				$rows[] = array(
+					'label' => __( 'Payment method', 'zen-membership-management' ),
+					'value' => esc_html( $subscription->get_payment_method_to_display( 'customer' ) ),
+				);
+			}
+
+			return apply_filters( 'zmm_membership_detail_rows', $rows, $membership, $subscription );
 		}
 
 		/**
-		 * Get the customer-facing subscription status label.
+		 * Get the customer-facing status label.
 		 *
-		 * @param WC_Subscription $subscription Linked subscription.
+		 * @param object               $membership   User membership.
+		 * @param WC_Subscription|null $subscription Linked subscription.
 		 * @return string
 		 */
-		private static function get_subscription_status_label( $subscription ) {
-			if ( $subscription->has_status( 'pending-cancel' ) || self::is_late_cancellation_scheduled( $subscription ) ) {
+		private static function get_customer_status_label( $membership, $subscription ) {
+			if ( $subscription && ( $subscription->has_status( 'pending-cancel' ) || self::is_late_cancellation_scheduled( $subscription ) ) ) {
 				return __( 'Pending Cancellation', 'zen-membership-management' );
 			}
 
-			return function_exists( 'wcs_get_subscription_status_name' )
-				? wcs_get_subscription_status_name( $subscription->get_status() )
-				: wc_get_order_status_name( $subscription->get_status() );
+			return wc_memberships_get_user_membership_status_name( $membership->get_status() );
 		}
 
 		/**
