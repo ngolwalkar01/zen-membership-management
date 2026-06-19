@@ -194,10 +194,14 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			echo '<div class="zmm-membership">';
 			self::render_membership_header( $membership );
-			self::render_membership_details( $membership, $subscription );
 
 			if ( $subscription ) {
 				self::render_subscription_totals( $subscription );
+			}
+
+			self::render_membership_details( $membership, $subscription );
+
+			if ( $subscription ) {
 				self::render_related_orders( $subscription );
 			}
 			echo '</div>';
