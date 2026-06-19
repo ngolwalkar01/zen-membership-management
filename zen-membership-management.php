@@ -18,6 +18,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		const ENDPOINT = 'my-membership';
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;
+		const OPTION_CANCELLATION_DEADLINE_DAYS = 'zmm_monthly_cancellation_deadline_days';
 		const META_CANCEL_AFTER_NEXT_PAYMENT = '_zmm_cancel_after_next_payment';
 		const META_CANCEL_REQUESTED_AT = '_zmm_cancel_requested_at';
 		const META_CANCEL_REQUESTED_BY = '_zmm_cancel_requested_by';
@@ -65,6 +66,8 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_action( 'woocommerce_check_cart_items', array( __CLASS__, 'validate_single_membership_cart' ) );
 
 			if ( is_admin() ) {
+				add_action( 'admin_menu', array( __CLASS__, 'register_settings_page' ) );
+				add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
 				add_action( 'admin_notices', array( __CLASS__, 'maybe_dependency_notice' ) );
 			}
 		}
@@ -97,6 +100,104 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			return function_exists( 'WC' )
 				&& function_exists( 'wc_memberships' )
 				&& function_exists( 'wc_memberships_get_user_memberships' );
+		}
+
+		/**
+		 * Register the plugin settings page.
+		 */
+		public static function register_settings_page() {
+			add_submenu_page(
+				'woocommerce',
+				__( 'Zen Membership Management', 'zen-membership-management' ),
+				__( 'Zen Membership', 'zen-membership-management' ),
+				'manage_woocommerce',
+				'zen-membership-management',
+				array( __CLASS__, 'render_settings_page' )
+			);
+		}
+
+		/**
+		 * Register plugin settings.
+		 */
+		public static function register_settings() {
+			register_setting(
+				'zmm_settings',
+				self::OPTION_CANCELLATION_DEADLINE_DAYS,
+				array(
+					'type'              => 'integer',
+					'sanitize_callback' => array( __CLASS__, 'sanitize_cancellation_deadline_days' ),
+					'default'           => self::CANCELLATION_DEADLINE_DAYS,
+				)
+			);
+
+			add_settings_section(
+				'zmm_monthly_rules',
+				__( 'Monthly Membership Rules', 'zen-membership-management' ),
+				'__return_false',
+				'zmm_settings'
+			);
+
+			add_settings_field(
+				self::OPTION_CANCELLATION_DEADLINE_DAYS,
+				__( 'Cancellation deadline', 'zen-membership-management' ),
+				array( __CLASS__, 'render_cancellation_deadline_field' ),
+				'zmm_settings',
+				'zmm_monthly_rules'
+			);
+		}
+
+		/**
+		 * Sanitize cancellation deadline setting.
+		 *
+		 * @param mixed $value Raw setting value.
+		 * @return int
+		 */
+		public static function sanitize_cancellation_deadline_days( $value ) {
+			return min( 365, max( 0, absint( $value ) ) );
+		}
+
+		/**
+		 * Render plugin settings page.
+		 */
+		public static function render_settings_page() {
+			if ( ! current_user_can( 'manage_woocommerce' ) ) {
+				return;
+			}
+			?>
+			<div class="wrap">
+				<h1><?php esc_html_e( 'Zen Membership Management', 'zen-membership-management' ); ?></h1>
+				<form action="options.php" method="post">
+					<?php
+					settings_fields( 'zmm_settings' );
+					do_settings_sections( 'zmm_settings' );
+					submit_button();
+					?>
+				</form>
+			</div>
+			<?php
+		}
+
+		/**
+		 * Render cancellation deadline field.
+		 */
+		public static function render_cancellation_deadline_field() {
+			$value = self::get_cancellation_deadline_days();
+			?>
+			<input
+				id="<?php echo esc_attr( self::OPTION_CANCELLATION_DEADLINE_DAYS ); ?>"
+				name="<?php echo esc_attr( self::OPTION_CANCELLATION_DEADLINE_DAYS ); ?>"
+				type="number"
+				min="0"
+				max="365"
+				step="1"
+				value="<?php echo esc_attr( $value ); ?>"
+				class="small-text"
+			/>
+			<span><?php esc_html_e( 'days before the next payment date', 'zen-membership-management' ); ?></span>
+			<p class="description">
+				<?php esc_html_e( 'Monthly cancellations before this deadline stop the next payment. Cancellations after this deadline are accepted, but the upcoming payment still runs and the membership ends after that paid month.', 'zen-membership-management' ); ?>
+			</p>
+			<?php
 		}
 
 		/**
@@ -651,12 +752,14 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 * @return int
 		 */
 		private static function get_cancellation_deadline_days() {
+			$configured_days = get_option( self::OPTION_CANCELLATION_DEADLINE_DAYS, self::CANCELLATION_DEADLINE_DAYS );
+
 			return max(
 				0,
 				absint(
 					apply_filters(
 						'zmm_monthly_cancellation_deadline_days',
-						self::CANCELLATION_DEADLINE_DAYS
+						$configured_days
 					)
 				)
 			);
