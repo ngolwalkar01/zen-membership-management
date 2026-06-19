@@ -731,20 +731,20 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			if ( ! self::customer_can_cancel_subscription( $subscription, $nonce ) ) {
 				wc_add_notice( __( 'We could not verify this cancellation request. Please try again.', 'zen-membership-management' ), 'error' );
-				wp_safe_redirect( $subscription->get_view_order_url() );
+				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
 				exit;
 			}
 
 			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
 				wc_add_notice( __( 'Your membership cancellation is already scheduled after the next paid month.', 'zen-membership-management' ), 'notice' );
-				wp_safe_redirect( $subscription->get_view_order_url() );
+				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
 				exit;
 			}
 
 			self::schedule_late_cancellation( $subscription );
 
 			wc_add_notice( __( 'Your cancellation has been accepted. The upcoming payment will still be charged, and your membership will end after that paid month.', 'zen-membership-management' ), 'success' );
-			wp_safe_redirect( $subscription->get_view_order_url() );
+			wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
 			exit;
 		}
 
