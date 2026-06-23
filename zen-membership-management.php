@@ -19,16 +19,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;
 		const OPTION_CANCELLATION_DEADLINE_DAYS = 'zmm_monthly_cancellation_deadline_days';
-		const YEARLY_CONTRACT_DEADLINE_DAYS = 30;
-		const OPTION_YEARLY_CONTRACT_DEADLINE_DAYS = 'zmm_yearly_contract_cancellation_deadline_days';
 		const META_CANCEL_AFTER_NEXT_PAYMENT = '_zmm_cancel_after_next_payment';
 		const META_CANCEL_REQUESTED_AT = '_zmm_cancel_requested_at';
 		const META_CANCEL_REQUESTED_BY = '_zmm_cancel_requested_by';
 		const META_CANCEL_TARGET_END = '_zmm_cancel_target_end';
-		const META_YEARLY_CANCEL_SCHEDULED = '_zmm_yearly_cancel_scheduled';
-		const META_YEARLY_CANCEL_REQUESTED_AT = '_zmm_yearly_cancel_requested_at';
-		const META_YEARLY_CANCEL_REQUESTED_BY = '_zmm_yearly_cancel_requested_by';
-		const META_YEARLY_CANCEL_TARGET_END = '_zmm_yearly_cancel_target_end';
 
 		/**
 		 * Boot plugin hooks.
@@ -67,7 +61,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_late_cancellation' ), 80 );
-			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_yearly_contract_cancellation' ), 80 );
 			add_action( 'woocommerce_subscription_renewal_payment_complete', array( __CLASS__, 'complete_scheduled_late_cancellation' ), 30, 2 );
 			add_action( 'woocommerce_subscription_renewal_payment_failed', array( __CLASS__, 'cancel_scheduled_late_cancellation_after_failed_renewal' ), 30, 2 );
 
@@ -139,16 +132,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				)
 			);
 
-			register_setting(
-				'zmm_settings',
-				self::OPTION_YEARLY_CONTRACT_DEADLINE_DAYS,
-				array(
-					'type'              => 'integer',
-					'sanitize_callback' => array( __CLASS__, 'sanitize_cancellation_deadline_days' ),
-					'default'           => self::YEARLY_CONTRACT_DEADLINE_DAYS,
-				)
-			);
-
 			add_settings_section(
 				'zmm_monthly_rules',
 				__( 'Monthly Membership Rules', 'zen-membership-management' ),
@@ -162,21 +145,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				array( __CLASS__, 'render_cancellation_deadline_field' ),
 				'zmm_settings',
 				'zmm_monthly_rules'
-			);
-
-			add_settings_section(
-				'zmm_yearly_contract_rules',
-				__( 'Yearly Contract Membership Rules', 'zen-membership-management' ),
-				'__return_false',
-				'zmm_settings'
-			);
-
-			add_settings_field(
-				self::OPTION_YEARLY_CONTRACT_DEADLINE_DAYS,
-				__( 'Cancellation deadline', 'zen-membership-management' ),
-				array( __CLASS__, 'render_yearly_contract_deadline_field' ),
-				'zmm_settings',
-				'zmm_yearly_contract_rules'
 			);
 		}
 
@@ -230,29 +198,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			<span><?php esc_html_e( 'days before the next payment date', 'zen-membership-management' ); ?></span>
 			<p class="description">
 				<?php esc_html_e( 'Monthly cancellations before this deadline stop the next payment. Cancellations after this deadline are accepted, but the upcoming payment still runs and the membership ends after that paid month.', 'zen-membership-management' ); ?>
-			</p>
-			<?php
-		}
-
-		/**
-		 * Render yearly contract cancellation deadline field.
-		 */
-		public static function render_yearly_contract_deadline_field() {
-			$value = self::get_yearly_contract_deadline_days();
-			?>
-			<input
-				id="<?php echo esc_attr( self::OPTION_YEARLY_CONTRACT_DEADLINE_DAYS ); ?>"
-				name="<?php echo esc_attr( self::OPTION_YEARLY_CONTRACT_DEADLINE_DAYS ); ?>"
-				type="number"
-				min="0"
-				max="365"
-				step="1"
-				value="<?php echo esc_attr( $value ); ?>"
-				class="small-text"
-			/>
-			<span><?php esc_html_e( 'days before the contract end date', 'zen-membership-management' ); ?></span>
-			<p class="description">
-				<?php esc_html_e( 'Yearly contract memberships are billed monthly. Cancellations before this deadline end at the current contract end date; cancellations after this deadline continue into the next yearly contract period.', 'zen-membership-management' ); ?>
 			</p>
 			<?php
 		}
@@ -549,10 +494,12 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 					);
 				}
 
-				$rows[] = array(
-					'label' => __( 'Cancellation deadline', 'zen-membership-management' ),
-					'value' => $deadline ? esc_html( self::format_timestamp( $deadline ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
-				);
+				if ( ! $is_yearly ) {
+					$rows[] = array(
+						'label' => __( 'Cancellation deadline', 'zen-membership-management' ),
+						'value' => $deadline ? esc_html( self::format_timestamp( $deadline ) ) : esc_html__( 'N/A', 'zen-membership-management' ),
+					);
+				}
 
 				if ( $end_time ) {
 					$rows[] = array(
@@ -593,7 +540,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 * @return string
 		 */
 		private static function get_customer_status_label( $membership, $subscription ) {
-			if ( $subscription && ( $subscription->has_status( 'pending-cancel' ) || self::is_late_cancellation_scheduled( $subscription ) || self::is_yearly_contract_cancellation_scheduled( $subscription ) ) ) {
+			if ( $subscription && ( $subscription->has_status( 'pending-cancel' ) || self::is_late_cancellation_scheduled( $subscription ) ) ) {
 				return __( 'Pending Cancellation', 'zen-membership-management' );
 			}
 
@@ -668,14 +615,8 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			unset( $actions['renew_now'], $actions['renew'] );
 
-			if ( self::is_yearly_contract_cancellation_scheduled( $subscription ) ) {
-				unset( $actions['cancel'] );
-
-				$actions['zmm_reactivate_yearly_contract_cancellation'] = array(
-					'url'  => self::get_yearly_contract_reactivation_url( $subscription ),
-					'name' => __( 'Reactivate Membership', 'zen-membership-management' ),
-					'role' => 'button',
-				);
+			if ( self::is_yearly_contract_subscription( $subscription ) ) {
+				$actions = self::get_yearly_contract_allowed_actions( $actions );
 			} elseif ( self::is_late_cancellation_scheduled( $subscription ) ) {
 				unset( $actions['cancel'] );
 
@@ -689,6 +630,26 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			return apply_filters( 'zmm_membership_subscription_actions', $actions, $subscription );
+		}
+
+		/**
+		 * Keep only payment-change actions for yearly contract memberships.
+		 *
+		 * @param array $actions Subscription actions.
+		 * @return array
+		 */
+		private static function get_yearly_contract_allowed_actions( $actions ) {
+			$allowed_actions = array();
+
+			foreach ( $actions as $action_key => $action ) {
+				$action_name = isset( $action['name'] ) ? wp_strip_all_tags( $action['name'] ) : '';
+
+				if ( in_array( $action_key, array( 'change_payment_method', 'change_payment' ), true ) || false !== stripos( $action_name, 'change payment' ) ) {
+					$allowed_actions[ $action_key ] = $action;
+				}
+			}
+
+			return $allowed_actions;
 		}
 
 		/**
@@ -718,35 +679,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 */
 		private static function get_late_cancellation_reactivation_nonce_action( $subscription ) {
 			return 'zmm_reactivate_late_cancellation_' . $subscription->get_id();
-		}
-
-		/**
-		 * Get custom reactivation URL for a yearly contract scheduled cancellation.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return string
-		 */
-		private static function get_yearly_contract_reactivation_url( $subscription ) {
-			return wp_nonce_url(
-				add_query_arg(
-					array(
-						'zmm_membership_action' => 'reactivate_yearly_contract_cancellation',
-						'subscription_id'       => $subscription->get_id(),
-					),
-					wc_get_account_endpoint_url( self::ENDPOINT )
-				),
-				self::get_yearly_contract_reactivation_nonce_action( $subscription )
-			);
-		}
-
-		/**
-		 * Get custom yearly contract reactivation nonce action.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return string
-		 */
-		private static function get_yearly_contract_reactivation_nonce_action( $subscription ) {
-			return 'zmm_reactivate_yearly_contract_cancellation_' . $subscription->get_id();
 		}
 
 		/**
@@ -794,50 +726,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Handle reactivation for yearly contract scheduled cancellations.
-		 */
-		public static function maybe_reactivate_yearly_contract_cancellation() {
-			if ( is_admin() || ( function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() ) || ! self::dependencies_loaded() || ! function_exists( 'wcs_get_subscription' ) ) {
-				return;
-			}
-
-			$requested_action = isset( $_GET['zmm_membership_action'] ) ? wc_clean( wp_unslash( $_GET['zmm_membership_action'] ) ) : '';
-
-			if ( 'reactivate_yearly_contract_cancellation' !== $requested_action ) {
-				return;
-			}
-
-			$subscription_id = isset( $_GET['subscription_id'] ) ? absint( wp_unslash( $_GET['subscription_id'] ) ) : 0;
-			$nonce           = isset( $_GET['_wpnonce'] ) ? wc_clean( wp_unslash( $_GET['_wpnonce'] ) ) : '';
-			$subscription    = $subscription_id ? wcs_get_subscription( $subscription_id ) : null;
-
-			if ( ! $subscription instanceof WC_Subscription || ! self::is_membership_subscription_for_current_user( $subscription ) || ! self::is_yearly_contract_subscription( $subscription ) ) {
-				return;
-			}
-
-			if ( ! wp_verify_nonce( $nonce, self::get_yearly_contract_reactivation_nonce_action( $subscription ) ) || ! current_user_can( 'edit_shop_subscription_status', $subscription->get_id() ) ) {
-				wc_add_notice( __( 'We could not verify this reactivation request. Please try again.', 'zen-membership-management' ), 'error' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			if ( ! self::is_yearly_contract_cancellation_scheduled( $subscription ) ) {
-				wc_add_notice( __( 'This membership is not scheduled for cancellation.', 'zen-membership-management' ), 'notice' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			self::clear_yearly_contract_cancellation_schedule( $subscription );
-
-			$subscription->add_order_note( __( 'Customer reactivated yearly contract membership. Scheduled cancellation was removed.', 'zen-membership-management' ) );
-			$subscription->save();
-
-			wc_add_notice( __( 'Your membership has been reactivated.', 'zen-membership-management' ), 'success' );
-			wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-			exit;
-		}
-
-		/**
 		 * Remove the custom late-cancellation schedule from a subscription.
 		 *
 		 * @param WC_Subscription $subscription Subscription.
@@ -847,18 +735,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			$subscription->delete_meta_data( self::META_CANCEL_REQUESTED_AT );
 			$subscription->delete_meta_data( self::META_CANCEL_REQUESTED_BY );
 			$subscription->delete_meta_data( self::META_CANCEL_TARGET_END );
-		}
-
-		/**
-		 * Remove the custom yearly contract cancellation schedule from a subscription.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 */
-		private static function clear_yearly_contract_cancellation_schedule( $subscription ) {
-			$subscription->delete_meta_data( self::META_YEARLY_CANCEL_SCHEDULED );
-			$subscription->delete_meta_data( self::META_YEARLY_CANCEL_REQUESTED_AT );
-			$subscription->delete_meta_data( self::META_YEARLY_CANCEL_REQUESTED_BY );
-			$subscription->delete_meta_data( self::META_YEARLY_CANCEL_TARGET_END );
 		}
 
 		/**
@@ -884,7 +760,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			if ( self::is_yearly_contract_subscription( $subscription ) ) {
-				self::handle_yearly_contract_cancellation_request( $subscription, $nonce );
+				self::block_yearly_contract_cancellation_request();
 			}
 
 			if ( ! self::is_monthly_subscription( $subscription ) ) {
@@ -915,59 +791,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Handle customer cancellation for yearly contract memberships.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @param string          $nonce        Request nonce.
+		 * Block customer cancellation for yearly contract memberships.
 		 */
-		private static function handle_yearly_contract_cancellation_request( $subscription, $nonce ) {
-			if ( ! self::customer_can_cancel_subscription( $subscription, $nonce ) ) {
-				wc_add_notice( __( 'We could not verify this cancellation request. Please try again.', 'zen-membership-management' ), 'error' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			if ( self::is_yearly_contract_cancellation_scheduled( $subscription ) ) {
-				wc_add_notice( __( 'Your yearly membership cancellation is already scheduled.', 'zen-membership-management' ), 'notice' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			$target_end_time      = self::get_yearly_contract_cancellation_target_end_time( $subscription );
-			$current_end_time     = self::get_yearly_contract_end_time( $subscription );
-			$is_after_deadline    = self::is_after_yearly_contract_deadline( $subscription );
-			$target_end_date_gmt  = $target_end_time ? gmdate( 'Y-m-d H:i:s', $target_end_time ) : '';
-			$current_end_date_gmt = $current_end_time ? gmdate( 'Y-m-d H:i:s', $current_end_time ) : '';
-
-			if ( ! $target_end_time || ! $target_end_date_gmt ) {
-				wc_add_notice( __( 'We could not determine the yearly contract end date. Please contact support.', 'zen-membership-management' ), 'error' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			try {
-				if ( $is_after_deadline && $target_end_time > $current_end_time ) {
-					$subscription->update_dates( array( 'end' => $target_end_date_gmt ) );
-				}
-
-				$subscription->update_meta_data( self::META_YEARLY_CANCEL_SCHEDULED, 'yes' );
-				$subscription->update_meta_data( self::META_YEARLY_CANCEL_REQUESTED_AT, current_time( 'mysql', true ) );
-				$subscription->update_meta_data( self::META_YEARLY_CANCEL_REQUESTED_BY, get_current_user_id() );
-				$subscription->update_meta_data( self::META_YEARLY_CANCEL_TARGET_END, $target_end_date_gmt );
-
-				$note = $is_after_deadline && $target_end_date_gmt !== $current_end_date_gmt
-					? __( 'Customer requested yearly contract cancellation after the deadline. Membership will continue into the next contract period.', 'zen-membership-management' )
-					: __( 'Customer requested yearly contract cancellation before the deadline. Membership will end at the current contract end date.', 'zen-membership-management' );
-
-				$subscription->add_order_note( $note );
-				$subscription->save();
-			} catch ( Exception $e ) {
-				wc_add_notice( __( 'We could not schedule this cancellation. Please contact support.', 'zen-membership-management' ), 'error' );
-				wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
-				exit;
-			}
-
-			wc_add_notice( __( 'Your cancellation has been accepted. Monthly payments will continue until the scheduled contract end date.', 'zen-membership-management' ), 'success' );
+		private static function block_yearly_contract_cancellation_request() {
+			wc_add_notice( __( 'Yearly memberships end automatically on the contract end date. You can update your payment method while the membership is active.', 'zen-membership-management' ), 'notice' );
 			wp_safe_redirect( wc_get_account_endpoint_url( self::ENDPOINT ) );
 			exit;
 		}
@@ -1200,10 +1027,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 * @return int
 		 */
 		private static function get_cancellation_deadline_time( $subscription ) {
-			if ( self::is_yearly_contract_subscription( $subscription ) ) {
-				return self::get_yearly_contract_cancellation_deadline_time( $subscription );
-			}
-
 			$next_payment = $subscription->get_time( 'next_payment' );
 
 			return $next_payment ? max( 0, (int) $next_payment - ( self::get_cancellation_deadline_days() * DAY_IN_SECONDS ) ) : 0;
@@ -1222,25 +1045,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				absint(
 					apply_filters(
 						'zmm_monthly_cancellation_deadline_days',
-						$configured_days
-					)
-				)
-			);
-		}
-
-		/**
-		 * Get yearly contract cancellation deadline in days.
-		 *
-		 * @return int
-		 */
-		private static function get_yearly_contract_deadline_days() {
-			$configured_days = get_option( self::OPTION_YEARLY_CONTRACT_DEADLINE_DAYS, self::YEARLY_CONTRACT_DEADLINE_DAYS );
-
-			return max(
-				0,
-				absint(
-					apply_filters(
-						'zmm_yearly_contract_cancellation_deadline_days',
 						$configured_days
 					)
 				)
@@ -1270,64 +1074,12 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Get yearly contract cancellation deadline timestamp.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return int
-		 */
-		private static function get_yearly_contract_cancellation_deadline_time( $subscription ) {
-			$contract_end = self::get_yearly_contract_end_time( $subscription );
-
-			return $contract_end ? max( 0, $contract_end - ( self::get_yearly_contract_deadline_days() * DAY_IN_SECONDS ) ) : 0;
-		}
-
-		/**
-		 * Check whether the yearly cancellation deadline has passed.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return bool
-		 */
-		private static function is_after_yearly_contract_deadline( $subscription ) {
-			$deadline = self::get_yearly_contract_cancellation_deadline_time( $subscription );
-
-			return $deadline && current_time( 'timestamp', true ) > $deadline;
-		}
-
-		/**
-		 * Get the target end date for a yearly contract cancellation request.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return int
-		 */
-		private static function get_yearly_contract_cancellation_target_end_time( $subscription ) {
-			$contract_end = self::get_yearly_contract_end_time( $subscription );
-
-			if ( ! $contract_end ) {
-				return 0;
-			}
-
-			if ( ! self::is_after_yearly_contract_deadline( $subscription ) ) {
-				return $contract_end;
-			}
-
-			if ( function_exists( 'wcs_add_time' ) ) {
-				return (int) wcs_add_time( 1, 'year', $contract_end );
-			}
-
-			return (int) strtotime( '+1 year', $contract_end );
-		}
-
-		/**
 		 * Get the customer-facing cancellation end timestamp.
 		 *
 		 * @param WC_Subscription $subscription Subscription.
 		 * @return int
 		 */
 		private static function get_cancellation_end_time( $subscription ) {
-			if ( self::is_yearly_contract_cancellation_scheduled( $subscription ) ) {
-				return self::get_yearly_contract_cancellation_target_end_time_from_meta( $subscription );
-			}
-
 			if ( self::is_late_cancellation_scheduled( $subscription ) ) {
 				return self::get_late_cancellation_target_end_time( $subscription );
 			}
@@ -1357,28 +1109,6 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		 */
 		private static function is_late_cancellation_scheduled( $subscription ) {
 			return 'yes' === $subscription->get_meta( self::META_CANCEL_AFTER_NEXT_PAYMENT, true );
-		}
-
-		/**
-		 * Check scheduled yearly contract cancellation flag.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return bool
-		 */
-		private static function is_yearly_contract_cancellation_scheduled( $subscription ) {
-			return 'yes' === $subscription->get_meta( self::META_YEARLY_CANCEL_SCHEDULED, true );
-		}
-
-		/**
-		 * Get yearly contract cancellation target end from meta.
-		 *
-		 * @param WC_Subscription $subscription Subscription.
-		 * @return int
-		 */
-		private static function get_yearly_contract_cancellation_target_end_time_from_meta( $subscription ) {
-			$stored_target = $subscription->get_meta( self::META_YEARLY_CANCEL_TARGET_END, true );
-
-			return $stored_target ? (int) strtotime( $stored_target . ' UTC' ) : 0;
 		}
 
 		/**
