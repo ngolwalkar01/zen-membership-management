@@ -1097,12 +1097,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			$is_yearly_contract = false;
 
 			if ( self::is_monthly_subscription( $subscription ) ) {
-				foreach ( self::get_subscription_product_ids( $subscription ) as $product_id ) {
-					$length   = absint( get_post_meta( $product_id, '_subscription_length', true ) );
-					$period   = (string) get_post_meta( $product_id, '_subscription_period', true );
-					$interval = absint( get_post_meta( $product_id, '_subscription_period_interval', true ) );
+				foreach ( $subscription->get_items() as $item ) {
+					$product = is_callable( array( $item, 'get_product' ) ) ? $item->get_product() : null;
 
-					if ( 12 === $length && 'month' === $period && 1 === $interval ) {
+					if ( $product instanceof WC_Product && self::product_has_yearly_contract_meta( $product ) && self::subscription_item_indicates_yearly_contract( $item, $product ) ) {
 						$is_yearly_contract = true;
 						break;
 					}
@@ -1113,26 +1111,71 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 		}
 
 		/**
-		 * Get product IDs from a subscription, including variation parents.
+		 * Check whether a product has the monthly-billed yearly contract subscription settings.
 		 *
-		 * @param WC_Subscription $subscription Subscription.
+		 * @param WC_Product $product Product.
+		 * @return bool
+		 */
+		private static function product_has_yearly_contract_meta( $product ) {
+			foreach ( self::get_product_and_parent_ids( $product ) as $product_id ) {
+				$length   = absint( get_post_meta( $product_id, '_subscription_length', true ) );
+				$period   = (string) get_post_meta( $product_id, '_subscription_period', true );
+				$interval = absint( get_post_meta( $product_id, '_subscription_period_interval', true ) );
+
+				if ( 12 === $length && 'month' === $period && 1 === $interval ) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		/**
+		 * Check whether the purchased item represents the yearly membership variation.
+		 *
+		 * @param WC_Order_Item_Product $item    Subscription item.
+		 * @param WC_Product            $product Product.
+		 * @return bool
+		 */
+		private static function subscription_item_indicates_yearly_contract( $item, $product ) {
+			if ( self::text_indicates_yearly_contract( $item->get_name() ) || self::text_indicates_yearly_contract( $product->get_name() ) ) {
+				return true;
+			}
+
+			foreach ( (array) $product->get_attributes() as $attribute_value ) {
+				if ( is_array( $attribute_value ) ) {
+					$attribute_value = implode( ' ', $attribute_value );
+				}
+
+				if ( self::text_indicates_yearly_contract( (string) $attribute_value ) ) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		/**
+		 * Check whether text identifies the yearly contract variation.
+		 *
+		 * @param string $text Text.
+		 * @return bool
+		 */
+		private static function text_indicates_yearly_contract( $text ) {
+			return false !== stripos( (string) $text, 'yearly' );
+		}
+
+		/**
+		 * Get a product ID and its parent ID when applicable.
+		 *
+		 * @param WC_Product $product Product.
 		 * @return array
 		 */
-		private static function get_subscription_product_ids( $subscription ) {
-			$product_ids = array();
+		private static function get_product_and_parent_ids( $product ) {
+			$product_ids = array( (int) $product->get_id() );
 
-			foreach ( $subscription->get_items() as $item ) {
-				$product = is_callable( array( $item, 'get_product' ) ) ? $item->get_product() : null;
-
-				if ( ! $product instanceof WC_Product ) {
-					continue;
-				}
-
-				$product_ids[] = (int) $product->get_id();
-
-				if ( $product->is_type( 'variation' ) || $product->is_type( 'subscription_variation' ) ) {
-					$product_ids[] = (int) $product->get_parent_id();
-				}
+			if ( $product->is_type( 'variation' ) || $product->is_type( 'subscription_variation' ) ) {
+				$product_ids[] = (int) $product->get_parent_id();
 			}
 
 			return array_values( array_unique( array_filter( $product_ids ) ) );
