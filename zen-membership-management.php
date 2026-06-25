@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Zen Membership Management
  * Description: Customer-facing membership management for Zenctuary accounts.
- * Version: 0.1.2
+ * Version: 0.1.3
  * Author: Custom
  * Text Domain: zen-membership-management
  *
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 	final class ZMM_Zen_Membership_Management {
 
-		const VERSION = '0.1.2';
+		const VERSION = '0.1.3';
 		const ENDPOINT = 'my-membership';
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;
@@ -230,6 +230,14 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				plugin_dir_url( __FILE__ ) . 'assets/css/zen-membership-management.css',
 				array(),
 				self::VERSION
+			);
+
+			wp_enqueue_script(
+				'zmm-membership-management',
+				plugin_dir_url( __FILE__ ) . 'assets/js/zen-membership-management.js',
+				array(),
+				self::VERSION,
+				true
 			);
 
 			if ( isset( $_GET['zmm_change_payment_method'] ) ) {
@@ -658,9 +666,22 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			?>
 			<section class="zmm-panel zmm-panel--cancel-membership">
 				<h3><?php esc_html_e( 'Cancel Membership', 'zen-membership-management' ); ?></h3>
-				<a class="button zmm-action zmm-action--cancel" href="<?php echo esc_url( $action['url'] ); ?>">
+				<a class="button zmm-action zmm-action--cancel" href="<?php echo esc_url( $action['url'] ); ?>" data-zmm-cancel-trigger>
 					<?php echo esc_html( $action['name'] ); ?>
 				</a>
+				<div class="zmm-cancel-modal" data-zmm-cancel-modal hidden>
+					<div class="zmm-cancel-modal__backdrop" data-zmm-cancel-dismiss></div>
+					<div class="zmm-cancel-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="zmm-cancel-modal-title-<?php echo esc_attr( $subscription->get_id() ); ?>" tabindex="-1">
+						<h3 id="zmm-cancel-modal-title-<?php echo esc_attr( $subscription->get_id() ); ?>"><?php esc_html_e( 'Cancel membership?', 'zen-membership-management' ); ?></h3>
+						<p><?php esc_html_e( 'Please confirm you want to cancel your monthly membership. You will continue to receive your Zencoins and benefits until the membership ends, and no further charges will be made after that date.', 'zen-membership-management' ); ?></p>
+						<a class="button zmm-cancel-modal__confirm" href="<?php echo esc_url( $action['url'] ); ?>">
+							<?php esc_html_e( 'Confirm Cancellation', 'zen-membership-management' ); ?>
+						</a>
+						<button type="button" class="button zmm-cancel-modal__keep" data-zmm-cancel-dismiss>
+							<?php esc_html_e( 'Keep Membership', 'zen-membership-management' ); ?>
+						</button>
+					</div>
+				</div>
 			</section>
 			<?php
 		}
