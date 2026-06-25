@@ -58,6 +58,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_filter( 'woocommerce_account_menu_items', array( __CLASS__, 'filter_account_menu_items' ), 1001 );
 			add_action( 'woocommerce_account_' . self::ENDPOINT . '_endpoint', array( __CLASS__, 'render_account_endpoint' ) );
 			add_filter( 'woocommerce_get_query_vars', array( __CLASS__, 'filter_woocommerce_query_vars' ) );
+			add_action( 'template_redirect', array( __CLASS__, 'maybe_redirect_change_payment_method_to_account' ), 5 );
 
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_late_cancellation' ), 80 );
@@ -229,6 +230,37 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 				array(),
 				self::VERSION
 			);
+
+			if ( isset( $_GET['zmm_change_payment_method'] ) ) {
+				wp_enqueue_script( 'wc-checkout' );
+			}
+		}
+
+		/**
+		 * Move native checkout/order-pay change-payment requests into the account shell.
+		 */
+		public static function maybe_redirect_change_payment_method_to_account() {
+			global $wp;
+
+			if ( is_admin() || ( function_exists( 'wp_doing_ajax' ) && wp_doing_ajax() ) || ( function_exists( 'is_account_page' ) && is_account_page() ) || ! isset( $_GET['change_payment_method'] ) ) {
+				return;
+			}
+
+			$subscription_id = absint( wp_unslash( $_GET['change_payment_method'] ) );
+			$order_pay_id    = isset( $wp->query_vars['order-pay'] ) ? absint( $wp->query_vars['order-pay'] ) : 0;
+
+			if ( ! $subscription_id || ! $order_pay_id || $subscription_id !== $order_pay_id || ! function_exists( 'wcs_get_subscription' ) ) {
+				return;
+			}
+
+			$subscription = wcs_get_subscription( $subscription_id );
+
+			if ( ! $subscription instanceof WC_Subscription || ! current_user_can( 'edit_shop_subscription_payment_method', $subscription_id ) ) {
+				return;
+			}
+
+			wp_safe_redirect( self::get_change_payment_method_account_url( $subscription ) );
+			exit;
 		}
 
 		/**
@@ -294,6 +326,11 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			$subscription = self::get_membership_subscription( $membership );
+
+			if ( $subscription && self::is_change_payment_method_request( $subscription ) ) {
+				self::render_change_payment_method_form( $subscription );
+				return;
+			}
 
 			echo '<div class="zmm-membership">';
 			self::render_membership_header( $membership );
@@ -615,6 +652,8 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 
 			unset( $actions['renew_now'], $actions['renew'] );
 
+			$actions = self::localize_change_payment_method_actions( $actions, $subscription );
+
 			if ( self::is_yearly_contract_subscription( $subscription ) ) {
 				$actions = self::get_yearly_contract_allowed_actions( $actions );
 			} elseif ( self::is_late_cancellation_scheduled( $subscription ) ) {
@@ -650,6 +689,201 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			return $allowed_actions;
+		}
+
+		/**
+		 * Point subscription payment-method actions back into the My Membership account tab.
+		 *
+		 * @param array           $actions      Subscription actions.
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return array
+		 */
+		private static function localize_change_payment_method_actions( $actions, $subscription ) {
+			foreach ( $actions as $action_key => $action ) {
+				$action_name = isset( $action['name'] ) ? wp_strip_all_tags( $action['name'] ) : '';
+
+				if ( in_array( $action_key, array( 'change_payment_method', 'change_payment' ), true ) || false !== stripos( $action_name, 'change payment' ) || false !== stripos( $action_name, 'add payment' ) ) {
+					$actions[ $action_key ]['url'] = self::get_change_payment_method_account_url( $subscription );
+				}
+			}
+
+			return $actions;
+		}
+
+		/**
+		 * Build the in-account payment-method update URL.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return string
+		 */
+		private static function get_change_payment_method_account_url( $subscription ) {
+			return add_query_arg(
+				array(
+					'zmm_change_payment_method' => $subscription->get_id(),
+					'change_payment_method'     => $subscription->get_id(),
+					'key'                       => $subscription->get_order_key(),
+					'pay_for_order'             => 'true',
+					'_wpnonce'                  => wp_create_nonce(),
+				),
+				wc_get_account_endpoint_url( self::ENDPOINT )
+			);
+		}
+
+		/**
+		 * Check whether the current request should render the change-payment flow.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function is_change_payment_method_request( $subscription ) {
+			$requested_id = isset( $_GET['zmm_change_payment_method'] ) ? absint( wp_unslash( $_GET['zmm_change_payment_method'] ) ) : 0;
+
+			return $requested_id && (int) $subscription->get_id() === $requested_id;
+		}
+
+		/**
+		 * Render the native WooCommerce Subscriptions change-payment form inside My Account.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function render_change_payment_method_form( $subscription ) {
+			echo '<div class="zmm-membership zmm-membership--change-payment">';
+			self::render_membership_header_for_change_payment();
+
+			$valid_request = self::validate_change_payment_method_request( $subscription );
+
+			if ( $valid_request ) {
+				self::set_order_pay_query_var_for_change_payment( $subscription );
+				self::prepare_subscription_customer_location( $subscription );
+				self::add_change_payment_method_notice( $subscription );
+			}
+
+			wc_print_notices();
+
+			if ( $valid_request ) {
+				echo '<section class="zmm-panel zmm-panel--change-payment">';
+				wc_get_template( 'checkout/form-change-payment-method.php', array( 'subscription' => $subscription ), '', WC_Subscriptions_Plugin::instance()->get_plugin_directory( 'templates/' ) );
+				echo '</section>';
+			}
+
+			echo '</div>';
+		}
+
+		/**
+		 * Render a compact heading for the payment-method update view.
+		 */
+		private static function render_membership_header_for_change_payment() {
+			?>
+			<header class="zmm-membership__header">
+				<div>
+					<p class="zmm-membership__eyebrow"><?php esc_html_e( 'My Membership', 'zen-membership-management' ); ?></p>
+					<h2><?php esc_html_e( 'Change payment method', 'zen-membership-management' ); ?></h2>
+				</div>
+				<a class="button zmm-action" href="<?php echo esc_url( wc_get_account_endpoint_url( self::ENDPOINT ) ); ?>">
+					<?php esc_html_e( 'Back to membership', 'zen-membership-management' ); ?>
+				</a>
+			</header>
+			<?php
+		}
+
+		/**
+		 * Validate the account-hosted change-payment request.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return bool
+		 */
+		private static function validate_change_payment_method_request( $subscription ) {
+			$nonce = isset( $_GET['_wpnonce'] ) ? wc_clean( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+			$key   = isset( $_GET['key'] ) ? wc_clean( wp_unslash( $_GET['key'] ) ) : '';
+
+			if ( ! $nonce || false === wp_verify_nonce( $nonce ) ) {
+				wc_add_notice( __( 'There was an error with your request. Please try again.', 'zen-membership-management' ), 'error' );
+				return false;
+			}
+
+			if ( ! function_exists( 'wcs_get_subscription' ) || ! $subscription instanceof WC_Subscription ) {
+				wc_add_notice( __( 'Invalid subscription.', 'zen-membership-management' ), 'error' );
+				return false;
+			}
+
+			if ( ! current_user_can( 'edit_shop_subscription_payment_method', $subscription->get_id() ) ) {
+				wc_add_notice( __( 'That does not appear to be one of your subscriptions.', 'zen-membership-management' ), 'error' );
+				return false;
+			}
+
+			if ( ! $subscription->can_be_updated_to( 'new-payment-method' ) ) {
+				wc_add_notice( __( 'The payment method can not be changed for that subscription.', 'zen-membership-management' ), 'error' );
+				return false;
+			}
+
+			if ( $subscription->get_order_key() !== $key ) {
+				wc_add_notice( __( 'Invalid order.', 'zen-membership-management' ), 'error' );
+				return false;
+			}
+
+			return true;
+		}
+
+		/**
+		 * Make gateway code see this account-hosted form as the subscription order-pay flow.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function set_order_pay_query_var_for_change_payment( $subscription ) {
+			global $wp;
+
+			if ( isset( $wp ) && is_object( $wp ) ) {
+				$wp->query_vars['order-pay'] = $subscription->get_id();
+			}
+		}
+
+		/**
+		 * Show the standard Subscriptions change-payment notice.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function add_change_payment_method_notice( $subscription ) {
+			if ( $subscription->get_time( 'next_payment' ) > 0 ) {
+				$next_payment_string = sprintf(
+					/* translators: %s: next payment date */
+					__( ' Next payment is due %s.', 'woocommerce-subscriptions' ),
+					$subscription->get_date_to_display( 'next_payment' )
+				);
+			} else {
+				$next_payment_string = '';
+			}
+
+			wc_add_notice(
+				apply_filters(
+					'woocommerce_subscriptions_change_payment_method_page_notice_message',
+					sprintf(
+						/* translators: %s: optional next payment date sentence */
+						__( 'Choose a new payment method.%s', 'woocommerce-subscriptions' ),
+						$next_payment_string
+					),
+					$subscription
+				),
+				'notice'
+			);
+		}
+
+		/**
+		 * Set the customer billing location to the subscription billing location.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function prepare_subscription_customer_location( $subscription ) {
+			if ( ! WC()->customer ) {
+				return;
+			}
+
+			foreach ( array( 'country', 'state', 'postcode' ) as $address_property ) {
+				$subscription_address = $subscription->{"get_billing_$address_property"}();
+
+				if ( $subscription_address ) {
+					WC()->customer->{"set_billing_$address_property"}( $subscription_address );
+				}
+			}
 		}
 
 		/**
