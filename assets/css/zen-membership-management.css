@@ -70,15 +70,12 @@
 }
 
 .zmm-panel--cancel-membership h3 {
-	color: #d8b354 !important;
 	font-size: 1rem;
 	margin: 0;
 }
 
 .zmm-panel--cancel-membership .zmm-action--cancel {
 	background: transparent;
-	border: 2px solid #d8b354 !important;
-	color: #d8b354 !important;
 	justify-self: start;
 }
 
