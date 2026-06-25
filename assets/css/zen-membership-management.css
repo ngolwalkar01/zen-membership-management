@@ -62,6 +62,120 @@
 	margin: 0;
 }
 
+.zmm-panel--change-payment #payment {
+	background: rgba(68, 64, 73, 0.92);
+	color: #f4f1e8;
+	margin-top: 24px;
+	overflow: hidden;
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods {
+	list-style: none;
+	margin: 0;
+	padding: 24px;
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods > li {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods > li::marker {
+	content: "";
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods > li > input.input-radio[name="payment_method"] {
+	display: none;
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods > li > label {
+	align-items: center;
+	display: flex;
+	font-size: 1.1rem;
+	font-weight: 500;
+	gap: 12px;
+	justify-content: space-between;
+	margin: 0 0 22px;
+	width: 100%;
+}
+
+.zmm-panel--change-payment #payment ul.payment_methods > li > label img,
+.zmm-panel--change-payment #payment ul.payment_methods > li > label svg {
+	margin-left: auto;
+	max-height: 28px;
+	width: auto;
+}
+
+.zmm-panel--change-payment #payment div.payment_box {
+	background: #ded9e4;
+	border-radius: 2px;
+	color: #4e4b55;
+	margin: 0;
+	padding: 24px;
+	position: relative;
+}
+
+.zmm-panel--change-payment #payment div.payment_box::before {
+	border: 14px solid transparent;
+	border-bottom-color: #ded9e4;
+	content: "";
+	left: 34px;
+	position: absolute;
+	top: -28px;
+}
+
+.zmm-panel--change-payment #payment div.payment_box p {
+	color: inherit;
+	margin: 0 0 16px;
+}
+
+.zmm-panel--change-payment #payment div.payment_box a {
+	color: #c7a64a;
+}
+
+.zmm-panel--change-payment #payment .woocommerce-SavedPaymentMethods {
+	display: grid;
+	gap: 16px;
+	list-style: none;
+	margin: 18px 0 22px;
+	padding: 0;
+}
+
+.zmm-panel--change-payment #payment .woocommerce-SavedPaymentMethods li {
+	align-items: center;
+	display: flex;
+	gap: 12px;
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.zmm-panel--change-payment #payment .woocommerce-SavedPaymentMethods label {
+	margin: 0;
+}
+
+.zmm-panel--change-payment #payment .wc-payment-form {
+	border: 1px solid rgba(78, 75, 85, 0.45);
+	margin: 18px 0 0;
+	padding: 22px !important;
+}
+
+.zmm-panel--change-payment #payment .wcpay-upe-element,
+.zmm-panel--change-payment #payment .wcpay-upe-form {
+	color: #4e4b55;
+}
+
+.zmm-panel--change-payment #payment .form-row {
+	margin: 0;
+	padding: 24px;
+	text-align: right;
+}
+
+.zmm-panel--change-payment #payment #place_order {
+	float: none;
+	margin: 0;
+}
 .zmm-empty {
 	display: grid;
 	gap: 8px;
@@ -86,5 +200,10 @@
 
 	.zmm-details th {
 		padding-bottom: 4px;
+	}
+	.zmm-panel--change-payment #payment ul.payment_methods,
+	.zmm-panel--change-payment #payment div.payment_box,
+	.zmm-panel--change-payment #payment .form-row {
+		padding: 18px;
 	}
 }
