@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Zen Membership Management
  * Description: Customer-facing membership management for Zenctuary accounts.
- * Version: 0.1.1
+ * Version: 0.1.2
  * Author: Custom
  * Text Domain: zen-membership-management
  *
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 	final class ZMM_Zen_Membership_Management {
 
-		const VERSION = '0.1.1';
+		const VERSION = '0.1.2';
 		const ENDPOINT = 'my-membership';
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;
@@ -345,6 +345,10 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			if ( $subscription ) {
 				self::render_related_orders( $subscription );
 			}
+
+			if ( $subscription ) {
+				self::render_membership_cancellation_section( $subscription );
+			}
 			echo '</div>';
 		}
 
@@ -470,7 +474,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 							</tr>
 						<?php endforeach; ?>
 						<?php if ( $subscription ) : ?>
-							<?php $actions = self::get_subscription_actions( $subscription ); ?>
+							<?php $actions = self::get_subscription_primary_actions( $subscription ); ?>
 							<?php if ( ! empty( $actions ) ) : ?>
 								<tr>
 									<th scope="row">
@@ -638,6 +642,88 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			return $product_id ? absint( get_post_meta( $product_id, self::MEMBERSHIP_GRANT_META, true ) ) : 0;
+		}
+
+		/**
+		 * Render the monthly cancellation action in its own bottom section.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 */
+		private static function render_membership_cancellation_section( $subscription ) {
+			$action = self::get_monthly_cancellation_action( $subscription );
+
+			if ( empty( $action ) ) {
+				return;
+			}
+			?>
+			<section class="zmm-panel zmm-panel--cancel-membership">
+				<h3><?php esc_html_e( 'Cancel Membership', 'zen-membership-management' ); ?></h3>
+				<a class="button zmm-action zmm-action--cancel" href="<?php echo esc_url( $action['url'] ); ?>">
+					<?php echo esc_html( $action['name'] ); ?>
+				</a>
+			</section>
+			<?php
+		}
+
+		/**
+		 * Get non-cancellation subscription actions for the membership details table.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return array
+		 */
+		private static function get_subscription_primary_actions( $subscription ) {
+			return array_filter(
+				self::get_subscription_actions( $subscription ),
+				static function ( $action, $action_key ) {
+					return self::is_primary_subscription_action( $action, $action_key );
+				},
+				ARRAY_FILTER_USE_BOTH
+			);
+		}
+
+		/**
+		 * Get the cancellation action only for monthly memberships.
+		 *
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return array
+		 */
+		private static function get_monthly_cancellation_action( $subscription ) {
+			if ( ! $subscription instanceof WC_Subscription || ! self::is_monthly_subscription( $subscription ) || self::is_yearly_contract_subscription( $subscription ) ) {
+				return array();
+			}
+
+			foreach ( self::get_subscription_actions( $subscription ) as $action_key => $action ) {
+				if ( self::is_cancellation_action( $action, $action_key ) ) {
+					return $action;
+				}
+			}
+
+			return array();
+		}
+
+		/**
+		 * Check whether an action should remain in the membership details action row.
+		 *
+		 * @param array  $action     Subscription action.
+		 * @param string $action_key Subscription action key.
+		 * @return bool
+		 */
+		private static function is_primary_subscription_action( $action, $action_key ) {
+			return ! self::is_cancellation_action( $action, $action_key );
+		}
+
+		/**
+		 * Check whether a subscription action is the cancellation action.
+		 *
+		 * @param array  $action     Subscription action.
+		 * @param string $action_key Subscription action key.
+		 * @return bool
+		 */
+		private static function is_cancellation_action( $action, $action_key ) {
+			$action_name = isset( $action['name'] ) ? wp_strip_all_tags( $action['name'] ) : '';
+			$action_url  = isset( $action['url'] ) ? (string) $action['url'] : '';
+
+			return 'cancel' === $action_key || false !== stripos( $action_name, 'cancel' ) || false !== strpos( $action_url, 'change_subscription_to=cancelled' );
 		}
 
 		/**
