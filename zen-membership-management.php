@@ -58,6 +58,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_filter( 'woocommerce_account_menu_items', array( __CLASS__, 'filter_account_menu_items' ), 1001 );
 			add_action( 'woocommerce_account_' . self::ENDPOINT . '_endpoint', array( __CLASS__, 'render_account_endpoint' ) );
 			add_filter( 'woocommerce_get_query_vars', array( __CLASS__, 'filter_woocommerce_query_vars' ) );
+			add_filter( 'woocommerce_is_checkout', array( __CLASS__, 'filter_is_checkout_for_change_payment_method' ) );
 			add_action( 'template_redirect', array( __CLASS__, 'maybe_redirect_change_payment_method_to_account' ), 5 );
 
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
@@ -234,6 +235,20 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			if ( isset( $_GET['zmm_change_payment_method'] ) ) {
 				wp_enqueue_script( 'wc-checkout' );
 			}
+		}
+
+		/**
+		 * Let payment gateways render their checkout tokenization UI inside the account-hosted change-payment flow.
+		 *
+		 * @param bool $is_checkout Whether WooCommerce sees the current request as checkout.
+		 * @return bool
+		 */
+		public static function filter_is_checkout_for_change_payment_method( $is_checkout ) {
+			if ( isset( $_GET['zmm_change_payment_method'] ) ) {
+				return true;
+			}
+
+			return $is_checkout;
 		}
 
 		/**
