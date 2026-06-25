@@ -59,6 +59,7 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			add_action( 'woocommerce_account_' . self::ENDPOINT . '_endpoint', array( __CLASS__, 'render_account_endpoint' ) );
 			add_filter( 'woocommerce_get_query_vars', array( __CLASS__, 'filter_woocommerce_query_vars' ) );
 			add_action( 'template_redirect', array( __CLASS__, 'maybe_redirect_change_payment_method_to_account' ), 5 );
+			add_filter( 'woocommerce_subscriptions_process_payment_for_change_method_via_pay_shortcode', array( __CLASS__, 'filter_change_payment_method_success_redirect' ), 20, 2 );
 
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_intercept_late_subscription_cancellation' ), 80 );
 			add_action( 'wp_loaded', array( __CLASS__, 'maybe_reactivate_late_cancellation' ), 80 );
@@ -669,6 +670,29 @@ if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 			}
 
 			return apply_filters( 'zmm_membership_subscription_actions', $actions, $subscription );
+		}
+
+		/**
+		 * Return successful membership payment-method updates to the custom membership detail screen.
+		 *
+		 * @param array           $result       Gateway payment result.
+		 * @param WC_Subscription $subscription Subscription.
+		 * @return array
+		 */
+		public static function filter_change_payment_method_success_redirect( $result, $subscription ) {
+			if (
+				is_array( $result )
+				&& isset( $result['result'] )
+				&& 'success' === $result['result']
+				&& $subscription instanceof WC_Subscription
+				&& self::is_membership_subscription_for_current_user( $subscription )
+				&& isset( $_POST['_wcsnonce'], $_POST['woocommerce_change_payment'] )
+				&& wp_verify_nonce( wc_clean( wp_unslash( $_POST['_wcsnonce'] ) ), 'wcs_change_payment_method' )
+			) {
+				$result['redirect'] = wc_get_account_endpoint_url( self::ENDPOINT );
+			}
+
+			return $result;
 		}
 
 		/**
