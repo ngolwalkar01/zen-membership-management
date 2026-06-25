@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Zen Membership Management
  * Description: Customer-facing membership management for Zenctuary accounts.
- * Version: 0.1.3
+ * Version: 0.1.4
  * Author: Custom
  * Text Domain: zen-membership-management
  *
@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 if ( ! class_exists( 'ZMM_Zen_Membership_Management' ) ) {
 	final class ZMM_Zen_Membership_Management {
 
-		const VERSION = '0.1.3';
+		const VERSION = '0.1.4';
 		const ENDPOINT = 'my-membership';
 		const MEMBERSHIP_GRANT_META = '_cbb_coin_grant_amount';
 		const CANCELLATION_DEADLINE_DAYS = 7;

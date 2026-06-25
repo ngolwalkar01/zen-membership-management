@@ -1,6 +1,8 @@
 (function () {
 	var activeTrigger = null;
 	var activeModal = null;
+	var activeModalParent = null;
+	var activeModalNextSibling = null;
 
 	function getFocusableElement(modal) {
 		return modal.querySelector('.zmm-cancel-modal__confirm, .zmm-cancel-modal__keep, a[href], button:not([disabled])');
@@ -16,6 +18,9 @@
 
 		activeTrigger = trigger;
 		activeModal = modal;
+		activeModalParent = modal.parentNode;
+		activeModalNextSibling = modal.nextSibling;
+		document.body.appendChild(modal);
 		modal.hidden = false;
 		document.body.classList.add('zmm-cancel-modal-open');
 
@@ -33,11 +38,17 @@
 		activeModal.hidden = true;
 		document.body.classList.remove('zmm-cancel-modal-open');
 
+		if (activeModalParent) {
+			activeModalParent.insertBefore(activeModal, activeModalNextSibling);
+		}
+
 		if (activeTrigger) {
 			activeTrigger.focus();
 		}
 
 		activeModal = null;
+		activeModalParent = null;
+		activeModalNextSibling = null;
 		activeTrigger = null;
 	}
 
